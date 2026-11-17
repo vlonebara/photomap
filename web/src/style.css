@@ -365,6 +365,17 @@ a:hover { text-decoration: underline; }
 .explorer-empty h1 { color: var(--ink); font-size: 1.35rem; font-weight: 720; }
 .explorer-empty p { margin-top: 6px; font-size: .88rem; }
 
+.explorer-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: .85rem;
+}
+
 .pick-notice {
   @apply absolute flex items-center gap-2.5;
   z-index: 1;

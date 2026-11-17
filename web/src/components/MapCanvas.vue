@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Crosshair, Layers, LocateFixed, Minus, Plus } from '@lucide/vue'
-import { Map as MapLibreMap, Marker, ScaleControl } from 'maplibre-gl'
+import { LngLatBounds, Map as MapLibreMap, Marker, ScaleControl } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
-import type { Coordinates, Series } from '../demo/types'
+import type { Coordinates, SeriesSummary } from '../api/types'
 
 const props = defineProps<{
-  series: Series[]
+  series: SeriesSummary[]
   activeId: number | null
   picking: boolean
   point: Coordinates | null
@@ -19,25 +19,27 @@ const emit = defineEmits<{
 }>()
 
 const styleUrl = 'https://tiles.openfreemap.org/styles/positron'
-const startCenter: Coordinates = [2.345, 48.856]
+const worldCenter: Coordinates = [0, 20]
+const worldZoom = 1.4
 const minZoom = 0
 const maxZoom = 20
 const container = ref<HTMLDivElement | null>(null)
 const status = ref<'loading' | 'ready' | 'failed' | 'unavailable'>('loading')
-const zoom = ref(14.2)
+const zoom = ref(worldZoom)
 const initialized = ref(false)
 
 let map: MapLibreMap | undefined
 let resizeObserver: ResizeObserver | undefined
 let loadTimer: number | undefined
 let pointMarker: Marker | undefined
+let mapFramed = false
 const markers = new Map<number, Marker>()
 
 function defaultZoom() {
   return (container.value?.clientWidth ?? 0) < 560 ? 13.65 : 14.2
 }
 
-function makeMarker(item: Series, currentMap: MapLibreMap) {
+function makeMarker(item: SeriesSummary, currentMap: MapLibreMap) {
   const button = document.createElement('button')
   button.type = 'button'
   button.className = 'series-marker'
@@ -77,11 +79,11 @@ function renderMarkers() {
     button.setAttribute('aria-pressed', String(selected))
     button.setAttribute(
       'aria-label',
-      `${props.picking ? 'Выбрать точку' : 'Открыть серию'} «${item.title}», снимков: ${item.photos.length}`,
+      `${props.picking ? 'Выбрать точку' : 'Открыть серию'} «${item.title}», снимков: ${item.photoCount}`,
     )
     button.title = item.title
     const badge = button.firstElementChild
-    if (badge) badge.textContent = item.photos.length > 99 ? '99+' : String(item.photos.length)
+    if (badge) badge.textContent = item.photoCount > 99 ? '99+' : String(item.photoCount)
     markers.set(item.id, marker)
   }
 }
@@ -117,8 +119,38 @@ function pickCenter() {
   emit('pick', [lng, lat])
 }
 
+function frameSeries(duration: number) {
+  if (!map) return
+
+  const [first] = props.series
+  if (!first) {
+    map.easeTo({ center: worldCenter, zoom: worldZoom, duration })
+    return
+  }
+
+  if (props.series.length === 1) {
+    map.easeTo({ center: first.coordinates, zoom: defaultZoom(), duration })
+    return
+  }
+
+  const bounds = new LngLatBounds(first.coordinates, first.coordinates)
+  for (const item of props.series) {
+    bounds.extend(item.coordinates)
+  }
+  map.fitBounds(bounds, { padding: 56, maxZoom: defaultZoom(), duration })
+}
+
 function resetView() {
-  map?.easeTo({ center: startCenter, zoom: defaultZoom(), duration: 360 })
+  frameSeries(360)
+}
+
+function frameInitialSeries() {
+  if (!map || mapFramed || !props.series.length) return
+  mapFramed = true
+
+  if (!props.focus && !props.picking) {
+    frameSeries(0)
+  }
 }
 
 function zoomIn() {
@@ -138,6 +170,7 @@ function disposeMap() {
   markers.clear()
   map?.remove()
   map = undefined
+  mapFramed = false
   initialized.value = false
 }
 
@@ -151,8 +184,8 @@ function initMap() {
     currentMap = new MapLibreMap({
       container: container.value,
       style: styleUrl,
-      center: startCenter,
-      zoom: defaultZoom(),
+      center: worldCenter,
+      zoom: worldZoom,
       minZoom,
       maxZoom,
       dragRotate: false,
@@ -202,9 +235,11 @@ function initMap() {
   resizeObserver.observe(container.value)
   renderMarkers()
   renderPoint()
+  frameInitialSeries()
   focusPhoto()
 }
 
+watch(() => props.series, frameInitialSeries)
 watch(() => [props.series, props.activeId, props.picking], renderMarkers)
 watch(() => props.point, renderPoint)
 watch(() => props.focus?.token, focusPhoto)
