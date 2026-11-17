@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Camera, Check, CircleX, MapPin, Plus, Search, ShieldCheck, UserRound } from '@lucide/vue'
+import { Check, CircleX, MapPin, Plus, Search, ShieldCheck, UserRound } from '@lucide/vue'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import AccountPanels from './components/AccountPanels.vue'
 import MapCanvas from './components/MapCanvas.vue'
@@ -156,8 +156,7 @@ onUnmounted(() => {
   <div class="app-shell">
     <header class="topbar">
       <button class="brand" type="button" aria-label="PhotoMap, вернуться к обзору" @click="resetExplore">
-        <span class="brand-icon"><Camera :size="20" aria-hidden="true" /></span>
-        <span>PhotoMap</span>
+        PhotoMap
       </button>
 
       <div class="search-box">

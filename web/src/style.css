@@ -78,19 +78,10 @@ a:hover { text-decoration: underline; }
 }
 
 .brand {
-  @apply inline-flex w-fit items-center gap-2.5;
+  @apply w-fit;
   font-size: 1.3rem;
   font-weight: 750;
   letter-spacing: -.04em;
-}
-
-.brand-icon {
-  @apply grid place-items-center;
-  width: 36px;
-  height: 36px;
-  border-radius: 9px;
-  background: var(--accent);
-  color: var(--surface);
 }
 
 .header-actions {
@@ -215,7 +206,15 @@ a:hover { text-decoration: underline; }
   background: var(--background);
 }
 
-.photo-frame img {
+.photo-open {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.photo-open:focus-visible { outline-offset: -4px; }
+
+.photo-open img {
   display: block;
   width: 100%;
   height: 100%;
@@ -223,14 +222,26 @@ a:hover { text-decoration: underline; }
   object-position: center 43%;
 }
 
+.photo-expand,
 .photo-index {
   position: absolute;
   right: 9px;
-  bottom: 9px;
-  padding: 3px 8px;
   border-radius: 5px;
   background: rgb(36 52 48 / 90%);
   color: white;
+  pointer-events: none;
+}
+
+.photo-expand {
+  @apply grid place-items-center;
+  top: 9px;
+  width: 29px;
+  height: 29px;
+}
+
+.photo-index {
+  bottom: 9px;
+  padding: 3px 8px;
   font-size: .74rem;
   font-variant-numeric: tabular-nums;
 }
@@ -404,7 +415,6 @@ a:hover { text-decoration: underline; }
   .login-button span { display: none; }
   .add-button { padding-inline: 9px; }
   .brand { font-size: 1.16rem; }
-  .brand-icon { width: 32px; height: 32px; }
   .workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; }
   .map-pane { grid-row: 1; height: clamp(260px, 45dvh, 410px); }
   .explorer { overflow: visible; border-top: 1px solid var(--line); border-right: 0; }

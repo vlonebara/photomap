@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { Camera, ChevronRight, Flag, Image, MapPin, Star } from '@lucide/vue'
-import { computed, ref, watch } from 'vue'
+import { Camera, ChevronRight, Flag, Image, MapPin, Maximize2, Star } from '@lucide/vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import type { Photo, Series } from '../demo/types'
 import { countLabel, photoDate } from '../format'
+import PhotoViewer from './PhotoViewer.vue'
 
 const props = defineProps<{
   series: Series[]
@@ -21,9 +22,20 @@ const emit = defineEmits<{
 }>()
 
 const imageFailed = ref(false)
+const viewerOpen = ref(false)
+const photoButton = ref<HTMLButtonElement | null>(null)
 const nextSeries = computed(() => props.series.filter((entry) => entry.id !== props.activeSeries?.id))
 const position = computed(() => (props.activeSeries?.photos.findIndex((item) => item.id === props.photo?.id) ?? -1) + 1)
-watch(() => props.photo?.imageUrl, () => { imageFailed.value = false })
+
+watch([() => props.photo?.id, () => props.photo?.imageUrl], () => {
+  imageFailed.value = false
+  viewerOpen.value = false
+})
+
+function closeViewer() {
+  viewerOpen.value = false
+  nextTick(() => photoButton.value?.focus({ preventScroll: true }))
+}
 </script>
 
 <template>
@@ -48,19 +60,31 @@ watch(() => props.photo?.imageUrl, () => { imageFailed.value = false })
       </div>
 
       <div class="photo-frame">
-        <img v-if="!imageFailed"
-          :key="photo.imageUrl"
-          :src="photo.imageUrl"
-          :alt="photo.title"
-          referrerpolicy="no-referrer"
-          @error="imageFailed = true"
-        />
+        <button
+          v-if="!imageFailed"
+          ref="photoButton"
+          type="button"
+          class="photo-open"
+          :aria-label="`Открыть фото «${photo.title}» в полном размере`"
+          aria-haspopup="dialog"
+          @click="viewerOpen = true"
+        >
+          <img
+            :key="photo.imageUrl"
+            :src="photo.imageUrl"
+            :alt="photo.title"
+            referrerpolicy="no-referrer"
+            @error="imageFailed = true"
+          />
+          <span class="photo-expand" aria-hidden="true"><Maximize2 :size="16" /></span>
+        </button>
         <div v-else class="image-empty">
           <Image :size="23" aria-hidden="true" />
           <span>Снимок не загрузился</span>
         </div>
         <div class="photo-index">{{ position }} / {{ activeSeries.photos.length }}</div>
       </div>
+      <PhotoViewer v-if="viewerOpen" :image-url="photo.imageUrl" :title="photo.title" @close="closeViewer" />
 
       <div v-if="activeSeries.photos.length > 1" class="timeline" aria-label="Снимки по годам">
         <button
