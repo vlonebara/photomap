@@ -19,6 +19,7 @@ func Open(path string) (*sql.DB, error) {
 	if path == "" {
 		return nil, errors.New("database path is empty")
 	}
+
 	if sqlite3.SQLITE_VERSION_NUMBER < minimumSQLiteVersion {
 		return nil, fmt.Errorf("SQLite %s is too old: version 3.51.3 or newer is required", sqlite3.SQLITE_VERSION)
 	}

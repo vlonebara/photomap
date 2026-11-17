@@ -1,0 +1,11 @@
+# local database files
+*.db
+# local environment settings
+*.env
+# editor settings
+.vscode
+# node modules
+node_modules/
+# demo files
+demo
+!/server/demo/

@@ -6,22 +6,21 @@ import (
 	"fmt"
 	"net/http"
 	"time"
-
-	"github.com/vlonebara/photomap/handlers"
 )
 
 // time limit for active requests during shutdown
 const shutdownTimeout = 10 * time.Second
 
 // server initialization
-func NewServer(addr string) *http.Server {
+func NewServer(addr string, router http.Handler) *http.Server {
 	return &http.Server{
 		Addr:    addr,
-		Handler: handlers.NewRouter(),
+		Handler: router,
 		// request headers timeout
 		ReadHeaderTimeout: 5 * time.Second,
 		// idle connection timeout
-		IdleTimeout: 60 * time.Second,
+		IdleTimeout:    60 * time.Second,
+		MaxHeaderBytes: 16 << 10,
 	}
 }
 

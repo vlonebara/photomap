@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vlonebara/photomap/handlers"
 	"github.com/vlonebara/photomap/server"
 )
 
@@ -25,7 +26,7 @@ func TestRun(t *testing.T) {
 	defer cancel()
 
 	// starting server on a free local port
-	addr, done := startServer(t, ctx, server.NewServer("127.0.0.1:0"))
+	addr, done := startServer(t, ctx, server.NewServer("127.0.0.1:0", handlers.NewRouter(nil, handlers.Config{})))
 	client := &http.Client{Timeout: 5 * time.Second}
 	defer client.CloseIdleConnections()
 
@@ -34,11 +35,13 @@ func TestRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	body, err := io.ReadAll(response.Body)
 	response.Body.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if response.StatusCode != http.StatusOK || string(body) != "{\"status\":\"ok\"}\n" {
 		t.Fatalf("health response: status = %d, body = %q", response.StatusCode, body)
 	}
@@ -71,7 +74,7 @@ func TestRunWaitsForActiveRequest(t *testing.T) {
 	defer releaseRequest()
 
 	// keeping request active until the test allows a response
-	srv := server.NewServer("127.0.0.1:0")
+	srv := server.NewServer("127.0.0.1:0", handlers.NewRouter(nil, handlers.Config{}))
 	srv.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(requestStarted)
 		select {
@@ -99,6 +102,7 @@ func TestRunWaitsForActiveRequest(t *testing.T) {
 				err = fmt.Errorf("active request: status = %d, body = %q", response.StatusCode, body)
 			}
 		}
+
 		requestErrors <- err
 	}()
 
@@ -119,6 +123,7 @@ func TestRunWaitsForActiveRequest(t *testing.T) {
 	if err := waitForResult(t, requestErrors); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := waitForResult(t, done); err != nil {
 		t.Fatalf("shutdown: %v", err)
 	}
@@ -133,11 +138,12 @@ func TestRunListenError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	defer listener.Close()
 
 	done := make(chan error, 1)
 	go func() {
-		done <- server.Run(t.Context(), server.NewServer(listener.Addr().String()))
+		done <- server.Run(t.Context(), server.NewServer(listener.Addr().String(), handlers.NewRouter(nil, handlers.Config{})))
 	}()
 
 	if err := waitForResult(t, done); !errors.Is(err, syscall.EADDRINUSE) {
@@ -155,6 +161,7 @@ func startServer(t *testing.T, ctx context.Context, srv *http.Server) (string, <
 		addresses <- listener.Addr().String()
 		return context.Background()
 	}
+
 	// closing server even if the test fails
 	t.Cleanup(func() {
 		if err := srv.Close(); err != nil {
@@ -174,6 +181,7 @@ func startServer(t *testing.T, ctx context.Context, srv *http.Server) (string, <
 	case <-time.After(5 * time.Second):
 		t.Fatal("server startup timed out")
 	}
+
 	return "", done
 }
 

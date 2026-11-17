@@ -15,6 +15,7 @@ func TestRunMissingDatabase(t *testing.T) {
 	if err := run(); err == nil {
 		t.Fatal("server started without the database")
 	}
+
 	if _, err := os.Stat("photomap.db"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("startup created an empty database: %v", err)
 	}

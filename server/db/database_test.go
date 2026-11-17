@@ -29,6 +29,7 @@ func TestOpenConnectionSettings(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		t.Cleanup(func() {
 			if err := connection.Close(); err != nil {
 				t.Errorf("close connection: %v", err)
@@ -44,12 +45,14 @@ func TestOpenConnectionSettings(t *testing.T) {
 			{name: "busy timeout", query: "PRAGMA busy_timeout", want: 5000},
 			{name: "synchronous", query: "PRAGMA synchronous", want: 2},
 		}
+
 		for _, setting := range settings {
 			t.Run(fmt.Sprintf("connection %d/%s", i, setting.name), func(t *testing.T) {
 				var got int
 				if err := connection.QueryRowContext(t.Context(), setting.query).Scan(&got); err != nil {
 					t.Fatal(err)
 				}
+
 				if got != setting.want {
 					t.Errorf("setting = %d, want %d", got, setting.want)
 				}
@@ -61,6 +64,7 @@ func TestOpenConnectionSettings(t *testing.T) {
 		if err := connection.QueryRowContext(t.Context(), "PRAGMA journal_mode").Scan(&journalMode); err != nil {
 			t.Fatal(err)
 		}
+
 		if journalMode != "wal" {
 			t.Errorf("connection %d: journal mode = %q, want wal", i, journalMode)
 		}
@@ -69,6 +73,7 @@ func TestOpenConnectionSettings(t *testing.T) {
 	if sqlite3.SQLITE_VERSION_NUMBER < 3051003 {
 		t.Fatalf("SQLite %s does not meet the minimum version", sqlite3.SQLITE_VERSION)
 	}
+
 	t.Logf("SQLite %s", sqlite3.SQLITE_VERSION)
 }
 
@@ -81,11 +86,13 @@ func TestOpenMissingDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	defer connection.Close()
 
 	if err := connection.PingContext(t.Context()); err == nil {
 		t.Fatal("ping succeeded for a missing database")
 	}
+
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing database was created: %v", err)
 	}
@@ -109,9 +116,11 @@ func TestStoreClose(t *testing.T) {
 	if err := store.DB.PingContext(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := store.DB.Close(); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := store.DB.PingContext(t.Context()); err == nil {
 		t.Fatal("ping succeeded after closing the pool")
 	}
@@ -126,10 +135,12 @@ func newTestStore(t *testing.T) *db.Store {
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
+
 	connection, err := db.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	closeTestPool(t, connection)
 	return db.NewStore(connection)
 }

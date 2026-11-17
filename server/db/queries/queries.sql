@@ -1,1 +1,1 @@
--- application queries will be added when services and handlers are implemented
+-- application queries are grouped by feature in the neighbouring SQL files

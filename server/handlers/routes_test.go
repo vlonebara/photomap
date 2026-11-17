@@ -31,16 +31,18 @@ func TestNewRouter(t *testing.T) {
 
 			// sending request to router without starting a server
 			response := httptest.NewRecorder()
-			handlers.NewRouter().ServeHTTP(response, httptest.NewRequest(tt.method, tt.path, nil))
+			handlers.NewRouter(nil, handlers.Config{}).ServeHTTP(response, httptest.NewRequest(tt.method, tt.path, nil))
 
 			if response.Code != tt.status {
 				t.Fatalf("status = %d, want %d", response.Code, tt.status)
 			}
+
 			// checking health response format and body
 			if tt.status == http.StatusOK {
 				if got := response.Header().Get("Content-Type"); got != "application/json" {
 					t.Errorf("Content-Type = %q, want application/json", got)
 				}
+
 				if got := strings.TrimSpace(response.Body.String()); got != `{"status":"ok"}` {
 					t.Errorf("body = %q, want health response", got)
 				}

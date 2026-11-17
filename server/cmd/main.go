@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/vlonebara/photomap/db"
+	"github.com/vlonebara/photomap/handlers"
 	"github.com/vlonebara/photomap/server"
+	"github.com/vlonebara/photomap/service"
 )
 
 // application entry point
@@ -33,6 +35,7 @@ func run() (runErr error) {
 	if err != nil {
 		return err
 	}
+
 	store := db.NewStore(connection)
 
 	// closing database after the server has finished its active requests
@@ -49,10 +52,32 @@ func run() (runErr error) {
 	if err != nil {
 		return fmt.Errorf("ping database: %w", err)
 	}
+
 	log.Print("Database connected")
 
+	// preparing authentication and public update notifications
+	auth, err := service.NewAuthService(store, os.Getenv("JWT_SECRET"))
+	if err != nil {
+		return err
+	}
+
+	revision, err := store.GetMapRevision(ctx)
+	if err != nil {
+		return err
+	}
+
+	events := service.NewEvents(ctx, revision)
+	defer events.Close()
+
+	router := handlers.NewRouter(store, handlers.Config{
+		MediaDir:      "media",
+		Auth:          auth,
+		Events:        events,
+		SecureCookies: os.Getenv("COOKIE_SECURE") == "true",
+	})
+
 	// server initialization and startup
-	srv := server.NewServer(":8080")
+	srv := server.NewServer(":8080", router)
 	log.Printf("Starting HTTP server on %s", srv.Addr)
 
 	if err := server.Run(ctx, srv); err != nil {
