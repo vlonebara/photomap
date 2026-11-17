@@ -1,0 +1,1 @@
+-- application queries will be added when services and handlers are implemented

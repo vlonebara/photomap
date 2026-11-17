@@ -1,0 +1,12 @@
+# sqlc configuration version
+version: "2"
+sql:
+  # existing database schema and future application queries
+  - engine: "sqlite"
+    schema: "db/schema/001_init.sql"
+    queries: "db/queries"
+    gen:
+      go:
+        package: "db"
+        out: "db"
+        sql_package: "database/sql"
