@@ -1,16 +1,18 @@
 <script setup lang="ts">
-import { Camera, LogOut, UserRound, X } from '@lucide/vue'
+import { X } from '@lucide/vue'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import type { Coordinates, PhotoDraft, Role } from '../demo/types'
-import { useDemo } from '../demo/useDemo'
+import type { Coordinates, Viewer } from '../api/types'
+import AuthPanel from './AuthPanel.vue'
 import ModerationPanel from './ModerationPanel.vue'
+import MyPhotos from './MyPhotos.vue'
 import PhotoUpload from './PhotoUpload.vue'
-import { formError, photoStatuses } from './photoForm'
 
 type Panel = 'auth' | 'upload' | 'account' | 'moderation'
 
 const props = defineProps<{
   panel: Panel | null
+  viewer: Viewer | null
+  mapUpdate: number
   coordinates: Coordinates | null
   uploadKey: number
 }>()
@@ -19,96 +21,77 @@ const emit = defineEmits<{
   choosePoint: []
   notify: [message: string]
   openPhoto: [id: number]
+  session: [viewer: Viewer | null]
+  sessionExpired: []
+  changed: []
 }>()
 
-const { viewer, photos, signin, signout, addPhoto, removePhoto } = useDemo()
 const dialog = ref<HTMLDialogElement | null>(null)
 const authMode = ref<'signin' | 'register'>('signin')
-const name = ref('')
-const role = ref<Role>('user')
-const error = ref('')
-const deleteId = ref<number | null>(null)
 const uploadLoaded = ref(false)
-const myPhotos = computed(() => photos.value
-  .filter(photo => photo.authorId === viewer.value?.id && photo.status !== 'removed')
-  .sort((a, b) => b.id - a.id))
-const published = computed(() => myPhotos.value.filter(photo => photo.status === 'published'))
-const stars = computed(() => published.value.reduce((total, photo) => total + photo.stars, 0))
+const busy = ref(false)
 const titles: Record<Panel, string> = {
   auth: 'Войти',
   upload: 'Добавить фото',
   account: 'Личный кабинет',
   moderation: 'Модерация',
 }
-const heading = computed(() => props.panel === 'auth' && authMode.value === 'register'
-  ? 'Регистрация'
-  : props.panel ? titles[props.panel] : '')
-
-function setAuthMode(mode: 'signin' | 'register') {
-  authMode.value = mode
-  role.value = 'user'
-  error.value = ''
-}
+const heading = computed(() => {
+  if (props.panel === 'auth' && authMode.value === 'register') {
+    return 'Регистрация'
+  }
+  return props.panel ? titles[props.panel] : ''
+})
 
 function syncDialog() {
-  if (props.panel && !dialog.value?.open) dialog.value?.showModal()
-  if (!props.panel && dialog.value?.open) dialog.value.close()
+  if (props.panel && !dialog.value?.open) {
+    dialog.value?.showModal()
+  }
+  if (!props.panel && dialog.value?.open) {
+    dialog.value.close()
+  }
 }
 
 onMounted(syncDialog)
+watch(() => props.uploadKey, () => { uploadLoaded.value = false })
 watch(() => props.panel, async (panel) => {
-  error.value = ''
-  deleteId.value = null
-  if (panel === 'auth') setAuthMode('signin')
-  if (panel === 'upload') uploadLoaded.value = true
+  busy.value = false
+  if (panel === 'auth') {
+    authMode.value = 'signin'
+  }
+  if (panel === 'upload') {
+    uploadLoaded.value = true
+  } else if (panel) {
+    uploadLoaded.value = false
+  }
   await nextTick()
   syncDialog()
 }, { immediate: true })
 
 function close() {
-  if (props.panel === 'upload') uploadLoaded.value = false
+  if (busy.value) return
+
+  if (props.panel === 'upload') {
+    uploadLoaded.value = false
+  }
   emit('close')
 }
 
-function authenticate() {
-  error.value = ''
-  try {
-    if (!name.value.trim()) throw new Error('Введите имя.')
-    signin(name.value.trim(), role.value)
-    name.value = ''
-    emit('notify', authMode.value === 'register' ? 'Профиль создан.' : 'Вы вошли в аккаунт.')
-    close()
-  } catch (cause) {
-    error.value = formError(cause)
-  }
-}
-
-function leave() {
-  signout()
+function authenticated(viewer: Viewer, registered: boolean) {
+  emit('session', viewer)
+  emit('notify', registered ? 'Профиль создан.' : 'Вы вошли в аккаунт.')
   close()
+}
+
+function signedOut() {
+  emit('session', null)
   emit('notify', 'Вы вышли из аккаунта.')
+  close()
 }
 
-function upload(draft: PhotoDraft) {
-  error.value = ''
-  try {
-    addPhoto(draft)
-    close()
-    emit('notify', 'Снимок отправлен на модерацию.')
-  } catch (cause) {
-    error.value = formError(cause)
-  }
-}
-
-function remove(id: number) {
-  error.value = ''
-  try {
-    removePhoto(id)
-    deleteId.value = null
-    emit('notify', 'Публикация удалена.')
-  } catch (cause) {
-    error.value = formError(cause)
-  }
+function uploaded() {
+  emit('notify', 'Снимок отправлен на модерацию.')
+  close()
 }
 
 function openPhoto(id: number) {
@@ -129,84 +112,46 @@ function openPhoto(id: number) {
     <div class="panel-layout">
       <header class="panel-header">
         <h2 id="account-panel-title">{{ heading }}</h2>
-        <button class="button button-icon panel-close" type="button" aria-label="Закрыть" @click="close">
+        <button class="button button-icon panel-close" type="button" aria-label="Закрыть" :disabled="busy" @click="close">
           <X :size="20" aria-hidden="true" />
         </button>
       </header>
 
       <div class="panel-content">
-        <template v-if="panel === 'auth'">
-          <div class="panel-filters" aria-label="Вход или регистрация">
-            <button class="button" type="button" :aria-pressed="authMode === 'signin'" @click="setAuthMode('signin')">Войти</button>
-            <button class="button" type="button" :aria-pressed="authMode === 'register'" @click="setAuthMode('register')">Регистрация</button>
-          </div>
-          <p class="panel-hint panel-auth-hint">Для входа в демо достаточно имени.</p>
-          <form class="panel-form" @submit.prevent="authenticate">
-            <label>
-              Имя
-              <input v-model="name" class="field" name="displayName" maxlength="60" autocomplete="nickname" placeholder="Как к вам обращаться?" required>
-            </label>
-            <label v-if="authMode === 'signin'">
-              Роль в демо
-              <select v-model="role" class="field">
-                <option value="user">Пользователь</option>
-                <option value="moderator">Модератор</option>
-              </select>
-            </label>
-            <p v-if="error" class="panel-error" role="alert">{{ error }}</p>
-            <div class="panel-actions">
-              <button class="button button-primary" type="submit">
-                {{ authMode === 'signin' ? 'Войти' : 'Создать профиль' }}
-              </button>
-            </div>
-          </form>
-        </template>
+        <AuthPanel v-if="panel === 'auth'" v-model:mode="authMode" @authenticated="authenticated" @busy="busy = $event" />
 
-        <template v-else-if="panel === 'account' && viewer">
-          <div class="panel-profile">
-            <div class="panel-avatar" aria-hidden="true"><UserRound :size="22" /></div>
-            <div class="panel-photo-info">
-              <strong>{{ viewer.name }}</strong>
-              <p class="panel-hint">Фото на карте: {{ published.length }} · Звёзды: {{ stars }}</p>
-            </div>
-            <button type="button" class="button" @click="leave"><LogOut :size="16" aria-hidden="true" /> Выйти</button>
-          </div>
-          <section aria-labelledby="my-photos-title">
-            <h3 id="my-photos-title" class="panel-subtitle">Мои публикации</h3>
-            <p v-if="error" class="panel-error" role="alert">{{ error }}</p>
-            <p v-if="!myPhotos.length" class="panel-empty"><Camera :size="22" aria-hidden="true" /> У вас пока нет публикаций.</p>
-            <ul v-else class="panel-list">
-              <li v-for="photo in myPhotos" :key="photo.id" class="panel-list-item">
-                <img :src="photo.imageUrl" :alt="photo.title" loading="lazy">
-                <div class="panel-photo-info">
-                  <strong>{{ photo.title }}</strong>
-                  <p class="panel-hint">№{{ photo.id }}</p>
-                  <p class="panel-status">{{ photoStatuses[photo.status] }}</p>
-                </div>
-                <div v-if="deleteId === photo.id" class="panel-row-actions">
-                  <span>Удалить фото?</span>
-                  <button type="button" class="button" @click="deleteId = null">Отмена</button>
-                  <button type="button" class="button button-primary" @click="remove(photo.id)">Удалить</button>
-                </div>
-                <div v-else class="panel-row-actions">
-                  <button v-if="photo.status === 'published'" type="button" class="button" @click="openPhoto(photo.id)">Открыть</button>
-                  <button type="button" class="button" @click="deleteId = photo.id">Удалить</button>
-                </div>
-              </li>
-            </ul>
-          </section>
-        </template>
+        <MyPhotos
+          v-else-if="panel === 'account' && viewer"
+          :key="viewer.id"
+          :viewer="viewer"
+          :map-update="mapUpdate"
+          @signed-out="signedOut"
+          @session-expired="emit('sessionExpired')"
+          @busy="busy = $event"
+          @changed="emit('changed')"
+          @notify="emit('notify', $event)"
+          @open-photo="openPhoto"
+        />
 
-        <ModerationPanel v-else-if="panel === 'moderation' && viewer?.role === 'moderator'" @notify="emit('notify', $event)" />
+        <ModerationPanel
+          v-else-if="panel === 'moderation' && viewer?.role === 'moderator'"
+          :key="viewer.id"
+          :map-update="mapUpdate"
+          @session-expired="emit('sessionExpired')"
+          @busy="busy = $event"
+          @changed="emit('changed')"
+          @notify="emit('notify', $event)"
+        />
 
         <PhotoUpload
           v-if="uploadLoaded"
           :key="uploadKey"
           v-show="panel === 'upload'"
           :coordinates="coordinates"
-          :submit-error="error"
           @choose-point="emit('choosePoint')"
-          @submit="upload"
+          @uploaded="uploaded"
+          @session-expired="emit('sessionExpired')"
+          @busy="busy = $event"
         />
       </div>
     </div>
@@ -308,8 +253,16 @@ function openPhoto(id: number) {
   overflow-wrap: anywhere;
 }
 
-.account-panel .panel-auth-hint { margin: 11px 0 16px; }
+.account-panel .panel-auth-form { margin-top: 16px; }
 .account-panel .panel-error { margin: 0; color: #a42427; font-size: .85rem; }
+
+.account-panel .panel-list-error {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
 .account-panel .panel-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 
 .account-panel .panel-upload,
@@ -367,7 +320,6 @@ function openPhoto(id: number) {
   padding: 13px 0;
   border-top: 1px solid var(--line);
 }
-.account-panel .panel-list-item > img { width: 70px; height: 54px; object-fit: cover; border-radius: 5px; }
 .account-panel .panel-photo-info { min-width: 0; overflow-wrap: anywhere; }
 
 .account-panel .panel-status {
@@ -394,6 +346,5 @@ function openPhoto(id: number) {
   .account-panel .panel-content { padding-left: 14px; padding-right: 14px; }
   .account-panel .panel-field-grid { grid-template-columns: 1fr; }
   .account-panel .panel-list-item { grid-template-columns: 50px minmax(0, 1fr); gap: 7px 9px; }
-  .account-panel .panel-list-item > img { width: 50px; height: 45px; }
 }
 </style>

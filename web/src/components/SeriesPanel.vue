@@ -1,17 +1,18 @@
 <script setup lang="ts">
 import { Camera, ChevronRight, Flag, Image, MapPin, Maximize2, Star } from '@lucide/vue'
 import { computed, nextTick, ref, watch } from 'vue'
-import type { Photo, Series } from '../demo/types'
+import type { PublicPhoto, SeriesDetail, SeriesSummary } from '../api/types'
 import { countLabel, photoDate } from '../format'
 import PhotoViewer from './PhotoViewer.vue'
 
 const props = defineProps<{
-  series: Series[]
-  activeSeries: Series | null
-  photo: Photo | null
+  series: SeriesSummary[]
+  activeSeries: SeriesDetail | null
+  photo: PublicPhoto | null
   unavailable: boolean
-  starred: boolean
-  reported: boolean
+  loading: boolean
+  error: string
+  reactionBusy: boolean
 }>()
 
 const emit = defineEmits<{
@@ -19,13 +20,16 @@ const emit = defineEmits<{
   selectPhoto: [id: number]
   star: []
   report: []
+  retry: []
 }>()
 
 const imageFailed = ref(false)
 const viewerOpen = ref(false)
 const photoButton = ref<HTMLButtonElement | null>(null)
-const nextSeries = computed(() => props.series.filter((entry) => entry.id !== props.activeSeries?.id))
-const position = computed(() => (props.activeSeries?.photos.findIndex((item) => item.id === props.photo?.id) ?? -1) + 1)
+const nextSeries = computed(() => props.series.filter((entry) => entry.id !== props.photo?.seriesId))
+const position = computed(() => (props.activeSeries?.photos.findIndex((item) => item.id === props.photo?.id) ?? 0) + 1)
+const starred = computed(() => props.photo?.starredByMe ?? false)
+const reported = computed(() => props.photo?.reportedByMe ?? false)
 
 watch([() => props.photo?.id, () => props.photo?.imageUrl], () => {
   imageFailed.value = false
@@ -39,23 +43,28 @@ function closeViewer() {
 </script>
 
 <template>
-  <aside class="explorer" aria-label="Снимки на карте">
+  <aside class="explorer" aria-label="Снимки на карте" :aria-busy="loading">
+    <div v-if="error" class="explorer-error" role="alert">
+      <p>{{ error }}</p>
+      <button type="button" class="button" :disabled="loading" @click="emit('retry')">Повторить</button>
+    </div>
+
     <div v-if="unavailable" class="explorer-empty">
       <Image :size="27" aria-hidden="true" />
       <h1>Фото недоступно</h1>
       <p>Выберите другую серию на карте или в списке.</p>
     </div>
 
-    <section v-else-if="activeSeries && photo" class="series-content">
+    <section v-else-if="photo" class="series-content">
       <div class="series-heading">
-        <div v-if="activeSeries.place && activeSeries.place !== activeSeries.title" class="place-label">
+        <div v-if="activeSeries && activeSeries.place !== activeSeries.title" class="place-label">
           <MapPin :size="14" aria-hidden="true" />
           <span>{{ activeSeries.place }}</span>
         </div>
-        <h1>{{ activeSeries.title }}</h1>
+        <h1>{{ activeSeries?.title ?? photo.place }}</h1>
         <div class="series-stats">
-          <span><Camera :size="15" aria-hidden="true" /> {{ countLabel(activeSeries.photos.length, ['снимок', 'снимка', 'снимков']) }}</span>
-          <span><Star :size="15" aria-hidden="true" /> {{ countLabel(activeSeries.stars, ['звезда', 'звезды', 'звёзд']) }}</span>
+          <span><Camera :size="15" aria-hidden="true" /> {{ countLabel(activeSeries?.photoCount ?? 1, ['снимок', 'снимка', 'снимков']) }}</span>
+          <span><Star :size="15" aria-hidden="true" /> {{ countLabel(activeSeries?.stars ?? photo.stars, ['звезда', 'звезды', 'звёзд']) }}</span>
         </div>
       </div>
 
@@ -82,11 +91,11 @@ function closeViewer() {
           <Image :size="23" aria-hidden="true" />
           <span>Снимок не загрузился</span>
         </div>
-        <div class="photo-index">{{ position }} / {{ activeSeries.photos.length }}</div>
+        <div class="photo-index">{{ position }} / {{ activeSeries?.photoCount ?? 1 }}</div>
       </div>
       <PhotoViewer v-if="viewerOpen" :image-url="photo.imageUrl" :title="photo.title" @close="closeViewer" />
 
-      <div v-if="activeSeries.photos.length > 1" class="timeline" aria-label="Снимки по годам">
+      <div v-if="activeSeries && activeSeries.photos.length > 1" class="timeline" aria-label="Снимки по годам">
         <button
           v-for="item in activeSeries.photos"
           :key="item.id"
@@ -113,11 +122,11 @@ function closeViewer() {
         </div>
         <div class="photo-actions">
           <button type="button" class="button star-button" :class="{ 'starred': starred }" :aria-pressed="starred"
-            :aria-label="starred ? 'Снять звезду' : 'Поставить звезду'" @click="emit('star')">
+            :aria-label="starred ? 'Снять звезду' : 'Поставить звезду'" :disabled="reactionBusy" @click="emit('star')">
             <Star :size="16" aria-hidden="true" :fill="starred ? 'currentColor' : 'none'" />
             {{ photo.stars }}
           </button>
-          <button type="button" class="button report-button" :disabled="reported" @click="emit('report')">
+          <button type="button" class="button report-button" :disabled="reported || reactionBusy" @click="emit('report')">
             <Flag :size="15" aria-hidden="true" />
             {{ reported ? 'Жалоба отправлена' : 'Пожаловаться' }}
           </button>
@@ -125,7 +134,11 @@ function closeViewer() {
       </article>
     </section>
 
-    <div v-else class="explorer-empty">
+    <div v-else-if="loading" class="explorer-empty" role="status">
+      <p>Загружаем снимки…</p>
+    </div>
+
+    <div v-else-if="!error" class="explorer-empty">
       <Image :size="27" aria-hidden="true" />
       <h1>Снимки на карте</h1>
       <p>Здесь появятся фотографии после публикации.</p>
@@ -136,10 +149,10 @@ function closeViewer() {
       <ul>
         <li v-for="entry in nextSeries" :key="entry.id">
           <button class="series-link" type="button" @click="emit('selectSeries', entry.id)">
-            <img v-if="entry.photos[0]" :src="entry.photos[0].imageUrl" alt="" loading="lazy" referrerpolicy="no-referrer" />
+            <img :src="entry.thumbnailUrl" alt="" loading="lazy" referrerpolicy="no-referrer" />
             <span class="series-link-text">
               <strong>{{ entry.title }}</strong>
-              <span>{{ countLabel(entry.photos.length, ['снимок', 'снимка', 'снимков']) }}</span>
+              <span>{{ countLabel(entry.photoCount, ['снимок', 'снимка', 'снимков']) }}</span>
             </span>
             <ChevronRight :size="16" aria-hidden="true" />
           </button>

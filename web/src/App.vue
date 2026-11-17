@@ -1,15 +1,21 @@
 <script setup lang="ts">
-import { Check, CircleX, MapPin, Plus, Search, ShieldCheck, UserRound } from '@lucide/vue'
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { Check, CircleAlert, CircleX, MapPin, Plus, Search, ShieldCheck, UserRound } from '@lucide/vue'
+import { onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
+import { errorMessage, isApiError } from './api/client'
+import { photoMapApi } from './api/photomap'
+import type { Coordinates, PublicPhoto, Viewer } from './api/types'
 import AccountPanels from './components/AccountPanels.vue'
 import MapCanvas from './components/MapCanvas.vue'
 import SeriesPanel from './components/SeriesPanel.vue'
-import { useDemo } from './demo/useDemo'
-import type { Coordinates } from './demo/types'
+import { usePhotoMap } from './composables/usePhotoMap'
 
 type Panel = 'auth' | 'upload' | 'account' | 'moderation'
 
-const { viewer, series, toggleStar, hasStar, report, hasReported } = useDemo()
+const gallery = usePhotoMap()
+const { series, selectedSeries, selectedPhoto, unavailable, loading, error, mapUpdate } = gallery
+const viewer = shallowRef<Viewer | null>(null)
+const sessionLoading = ref(true)
+const reactionBusy = ref(false)
 const panel = ref<Panel | null>(null)
 const uploadKey = ref(0)
 const query = ref('')
@@ -18,49 +24,53 @@ const picking = ref(false)
 const point = ref<Coordinates | null>(null)
 const focus = ref<{ coordinates: Coordinates; token: number } | null>(null)
 const notice = ref('')
-let focusToken = 0
-let noticeTimer: ReturnType<typeof setTimeout> | undefined
-let resumeUpload = false
+const noticeIsError = ref(false)
 
-const initialSeries = computed(() => series.value.find((entry) => /нотр-дам|собор парижской/i.test(entry.title)) ?? series.value[0])
-const photoId = ref<number | null>(initialSeries.value?.id ?? null)
-const selectedSeries = computed(() => {
-  const id = photoId.value
-  return id === null ? initialSeries.value ?? null : series.value.find((entry) => entry.photos.some((photo) => photo.id === id)) ?? null
-})
-const selectedPhoto = computed(() => {
-  const photos = selectedSeries.value?.photos ?? []
-  return (photoId.value === null ? photos.find((photo) => photo.id === selectedSeries.value?.id) ?? photos[0] : photos.find((photo) => photo.id === photoId.value)) ?? null
-})
-const unavailable = computed(() => photoId.value !== null && !selectedPhoto.value)
+let focusToken = 0
+let focusPhotoId: number | null = null
+let noticeTimer: ReturnType<typeof setTimeout> | undefined
+let sessionRequest: AbortController | null = null
+let resumeUpload = false
 
 function focusMap(coordinates: Coordinates) {
   focus.value = { coordinates, token: ++focusToken }
 }
 
-function notify(message: string) {
+watch(selectedPhoto, (photo) => {
+  if (photo && photo.id === focusPhotoId) {
+    focusPhotoId = null
+    focusMap(photo.coordinates)
+  }
+})
+
+function notify(message: string, failed = false) {
   clearTimeout(noticeTimer)
   notice.value = message
+  noticeIsError.value = failed
   noticeTimer = setTimeout(() => { notice.value = '' }, 3800)
 }
 
-function openPhoto(id: number, moveMap = false) {
-  photoId.value = id
-  if (moveMap && selectedPhoto.value) {
-    focusMap(selectedPhoto.value.coordinates)
-  }
+function openPhoto(id: number, moveMap = false, fromSeries = false) {
+  focusPhotoId = moveMap ? id : null
+  void gallery.select(id, fromSeries)
 }
 
 function selectSeries(id: number, moveMap = false) {
-  const entry = series.value.find((item) => item.id === id)
-  if (entry?.photos[0]) openPhoto(entry.id)
-  if (entry && moveMap) focusMap(entry.coordinates)
+  openPhoto(id, moveMap, true)
+}
+
+function parsePhotoId(value: string) {
+  if (!/^\d+$/.test(value)) {
+    return null
+  }
+  const id = Number(value)
+  return Number.isSafeInteger(id) && id > 0 ? id : null
 }
 
 function searchPhoto() {
   const value = query.value.trim().replace(/^#\s*/, '')
-  const id = Number(value)
-  if (!/^\d+$/.test(value) || !Number.isSafeInteger(id) || id < 1) {
+  const id = parsePhotoId(value)
+  if (id === null) {
     searchError.value = 'Введите номер снимка'
     return
   }
@@ -70,10 +80,15 @@ function searchPhoto() {
 }
 
 function resetExplore() {
-  photoId.value = initialSeries.value?.id ?? null
   query.value = ''
   searchError.value = ''
-  if (initialSeries.value) focusMap(initialSeries.value.coordinates)
+  const [first] = series.value
+  if (first) {
+    selectSeries(first.id, true)
+  } else {
+    focusPhotoId = null
+    gallery.clearSelection()
+  }
 }
 
 function choosePoint() {
@@ -87,6 +102,7 @@ function startUpload() {
     panel.value = 'auth'
     return
   }
+
   uploadKey.value++
   point.value = null
   choosePoint()
@@ -94,6 +110,7 @@ function startUpload() {
 
 function pickPoint(coordinates: Coordinates) {
   if (!picking.value) return
+
   point.value = coordinates
   picking.value = false
   panel.value = 'upload'
@@ -101,7 +118,9 @@ function pickPoint(coordinates: Coordinates) {
 
 function cancelPicking() {
   picking.value = false
-  if (point.value) panel.value = 'upload'
+  if (point.value) {
+    panel.value = 'upload'
+  }
 }
 
 function closePanel() {
@@ -109,45 +128,126 @@ function closePanel() {
   const startAfterSignin = resumeUpload && viewer.value
   resumeUpload = false
   point.value = null
-  if (startAfterSignin) startUpload()
+  if (startAfterSignin) {
+    startUpload()
+  }
 }
 
-function onPublicPhoto(action: (id: number) => void) {
+function setViewer(user: Viewer | null) {
+  sessionRequest?.abort()
+  viewer.value = user
+  sessionLoading.value = false
+}
+
+watch(viewer, (user, previous) => {
+  if (user?.id === previous?.id && user?.role === previous?.role) {
+    return
+  }
+
+  gallery.refreshViewer()
+  const privatePanel = panel.value === 'upload' || panel.value === 'account' || panel.value === 'moderation'
+  if (previous && user?.id !== previous.id && (privatePanel || picking.value)) {
+    picking.value = false
+    uploadKey.value++
+    closePanel()
+  } else if (panel.value === 'moderation' && user?.role !== 'moderator') {
+    closePanel()
+  }
+})
+
+async function restoreSession() {
+  sessionRequest?.abort()
+  const request = new AbortController()
+  sessionRequest = request
+
+  try {
+    const user = await photoMapApi.getViewer(request.signal)
+    if (!request.signal.aborted) {
+      viewer.value = user
+    }
+  } catch (error) {
+    if (!request.signal.aborted && isApiError(error, 401)) {
+      viewer.value = null
+    }
+  } finally {
+    if (sessionRequest === request) {
+      sessionLoading.value = false
+      sessionRequest = null
+    }
+  }
+}
+
+function expireSession() {
+  setViewer(null)
+  picking.value = false
+  point.value = null
+  uploadKey.value++
+  panel.value = 'auth'
+  notify('Сессия закончилась. Войдите снова.', true)
+}
+
+async function onPublicPhoto(action: (photo: PublicPhoto) => Promise<void>) {
+  if (reactionBusy.value) return
   if (!viewer.value) {
     panel.value = 'auth'
     return
   }
-  if (!selectedPhoto.value) return
+
+  const photo = selectedPhoto.value
+  if (!photo) return
+
+  reactionBusy.value = true
   try {
-    action(selectedPhoto.value.id)
+    await action(photo)
   } catch (error) {
-    notify(error instanceof Error ? error.message : 'Повторите действие')
+    if (isApiError(error, 401)) {
+      expireSession()
+    } else {
+      notify(errorMessage(error), true)
+    }
+  } finally {
+    await gallery.refresh()
+    reactionBusy.value = false
   }
 }
 
 function markStar() {
-  onPublicPhoto(toggleStar)
+  return onPublicPhoto(async (photo) => {
+    const result = await photoMapApi.setStar(photo.id, !photo.starredByMe)
+    gallery.updateReaction(photo.id, result)
+  })
 }
 
 function reportPhoto() {
-  onPublicPhoto((id) => {
-    if (hasReported(id)) return
-    report(id)
+  return onPublicPhoto(async (photo) => {
+    if (photo.reportedByMe) return
+
+    const result = await photoMapApi.report(photo.id)
+    gallery.updateReaction(photo.id, result)
     notify('Жалоба отправлена')
   })
 }
 
 function readPhotoLink() {
-  const match = /^#photo-(\d+)$/.exec(location.hash)
-  if (match) openPhoto(Number(match[1]), true)
+  const match = /^#photo-(\d+)$/.exec(window.location.hash)
+  const id = match ? parsePhotoId(match[1]) : null
+  if (id !== null) {
+    openPhoto(id, true)
+  }
 }
 
 onMounted(() => {
   readPhotoLink()
+  gallery.start()
+  void restoreSession()
+  window.addEventListener('focus', restoreSession)
   window.addEventListener('hashchange', readPhotoLink)
 })
+
 onUnmounted(() => {
   clearTimeout(noticeTimer)
+  sessionRequest?.abort()
+  window.removeEventListener('focus', restoreSession)
   window.removeEventListener('hashchange', readPhotoLink)
 })
 </script>
@@ -183,11 +283,11 @@ onUnmounted(() => {
           <ShieldCheck :size="19" aria-hidden="true" />
         </button>
         <button type="button" class="button login-button"
-          :aria-label="viewer ? 'Личный кабинет' : 'Войти'" @click="panel = viewer ? 'account' : 'auth'">
+          :aria-label="viewer ? 'Личный кабинет' : 'Войти'" :disabled="sessionLoading" @click="panel = viewer ? 'account' : 'auth'">
           <UserRound :size="17" aria-hidden="true" />
           <span>{{ viewer ? 'Кабинет' : 'Войти' }}</span>
         </button>
-        <button type="button" class="button button-primary add-button" aria-label="Добавить фото" @click="startUpload">
+        <button type="button" class="button button-primary add-button" aria-label="Добавить фото" :disabled="sessionLoading" @click="startUpload">
           <Plus :size="19" aria-hidden="true" />
           <span>Добавить фото</span>
         </button>
@@ -200,17 +300,19 @@ onUnmounted(() => {
         :active-series="selectedSeries"
         :photo="selectedPhoto"
         :unavailable="unavailable"
-        :starred="Boolean(selectedPhoto && hasStar(selectedPhoto.id))"
-        :reported="Boolean(selectedPhoto && hasReported(selectedPhoto.id))"
+        :loading="loading"
+        :error="error"
+        :reaction-busy="reactionBusy || sessionLoading"
         @select-series="selectSeries($event, true)"
         @select-photo="openPhoto($event)"
         @star="markStar"
         @report="reportPhoto"
+        @retry="gallery.refresh()"
       />
       <section class="map-pane" aria-label="Историческая карта">
         <MapCanvas
           :series="series"
-          :active-id="selectedSeries?.id ?? null"
+          :active-id="selectedPhoto?.seriesId ?? null"
           :picking="picking"
           :point="point"
           :focus="focus"
@@ -229,13 +331,22 @@ onUnmounted(() => {
 
     <AccountPanels
       :panel="panel"
+      :viewer="viewer"
+      :map-update="mapUpdate"
       :upload-key="uploadKey"
       :coordinates="point"
       @close="closePanel"
       @choose-point="choosePoint"
-      @notify="notify"
+      @notify="notify($event)"
       @open-photo="openPhoto($event, true)"
+      @session="setViewer"
+      @session-expired="expireSession"
+      @changed="gallery.refresh()"
     />
-    <div v-if="notice" class="toast" role="status"><Check :size="18" aria-hidden="true" /> {{ notice }}</div>
+    <div v-if="notice" class="toast" role="status">
+      <CircleAlert v-if="noticeIsError" :size="18" aria-hidden="true" />
+      <Check v-else :size="18" aria-hidden="true" />
+      {{ notice }}
+    </div>
   </div>
 </template>

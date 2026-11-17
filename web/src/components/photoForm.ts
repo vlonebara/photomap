@@ -1,4 +1,4 @@
-import type { Coordinates, Photo, PhotoDraft } from '../demo/types'
+import type { Coordinates, Photo, PhotoInput, PhotoStatus } from '../api/types'
 
 export interface PhotoFieldsValue {
   title: string
@@ -22,28 +22,38 @@ export function photoFields(photo?: Photo): PhotoFieldsValue {
   }
 }
 
-export function toPhotoDraft(
-  fields: PhotoFieldsValue, coordinates: Coordinates | null, imageUrl: string,
-): PhotoDraft {
-  if (!coordinates) throw new Error('Отметьте на карте объект, который виден на фото.')
+export function toPhotoInput(fields: PhotoFieldsValue, coordinates: Coordinates | null): PhotoInput {
+  if (!coordinates) {
+    throw new Error('Отметьте на карте объект, который виден на фото.')
+  }
+  if (fields.year === '') {
+    throw new Error('Укажите год съёмки.')
+  }
+  const [longitude, latitude] = coordinates
+
   return {
-    title: fields.title,
-    place: fields.place,
-    description: fields.description,
-    year: fields.year === '' ? Number.NaN : fields.year,
-    endYear: fields.endYear === '' ? undefined : fields.endYear,
-    coordinates,
-    imageUrl,
-    sourceName: fields.sourceName,
-    sourceUrl: fields.sourceUrl,
+    title: fields.title.trim(),
+    place: fields.place.trim(),
+    description: fields.description.trim(),
+    year: fields.year,
+    endYear: fields.endYear === '' ? null : fields.endYear,
+    longitude,
+    latitude,
+    sourceName: fields.sourceName.trim() || null,
+    sourceUrl: fields.sourceUrl.trim() || null,
   }
 }
 
-export function formError(error: unknown): string {
-  return error instanceof Error ? error.message : 'Не удалось выполнить действие. Попробуйте ещё раз.'
+// send only changed fields so edits do not overwrite other values
+export function photoChanges(input: PhotoInput, original: Photo): Partial<PhotoInput> {
+  const previous = toPhotoInput(photoFields(original), original.coordinates)
+  const changes = Object.entries(input).filter(([field, value]) => {
+    return previous[field as keyof PhotoInput] !== value
+  })
+  return Object.fromEntries(changes)
 }
 
-export const photoStatuses: Record<Photo['status'], string> = {
+export const photoStatuses: Record<PhotoStatus, string> = {
   pending: 'На проверке',
   published: 'На карте',
   review: 'Повторная проверка',
