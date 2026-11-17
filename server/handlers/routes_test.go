@@ -9,9 +9,11 @@ import (
 	"github.com/vlonebara/photomap/handlers"
 )
 
+// checking health endpoint and invalid requests
 func TestNewRouter(t *testing.T) {
 	t.Parallel()
 
+	// request data and expected status codes
 	tests := []struct {
 		name   string
 		method string
@@ -27,12 +29,14 @@ func TestNewRouter(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
+			// sending request to router without starting a server
 			response := httptest.NewRecorder()
 			handlers.NewRouter().ServeHTTP(response, httptest.NewRequest(tt.method, tt.path, nil))
 
 			if response.Code != tt.status {
 				t.Fatalf("status = %d, want %d", response.Code, tt.status)
 			}
+			// checking health response format and body
 			if tt.status == http.StatusOK {
 				if got := response.Header().Get("Content-Type"); got != "application/json" {
 					t.Errorf("Content-Type = %q, want application/json", got)

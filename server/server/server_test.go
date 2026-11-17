@@ -17,16 +17,19 @@ import (
 	"github.com/vlonebara/photomap/server"
 )
 
+// checking server startup and shutdown
 func TestRun(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
+	// starting server on a free local port
 	addr, done := startServer(t, ctx, server.NewServer("127.0.0.1:0"))
 	client := &http.Client{Timeout: 5 * time.Second}
 	defer client.CloseIdleConnections()
 
+	// checking health response over a real connection
 	response, err := client.Get("http://" + addr + "/health")
 	if err != nil {
 		t.Fatal(err)
@@ -40,11 +43,13 @@ func TestRun(t *testing.T) {
 		t.Fatalf("health response: status = %d, body = %q", response.StatusCode, body)
 	}
 
+	// stopping server and waiting for result
 	cancel()
 	if err := waitForResult(t, done); err != nil {
 		t.Fatalf("shutdown: %v", err)
 	}
 
+	// checking server no longer accepts connections
 	response, err = client.Get("http://" + addr + "/health")
 	if err == nil {
 		response.Body.Close()
@@ -52,17 +57,20 @@ func TestRun(t *testing.T) {
 	}
 }
 
+// checking shutdown waits for active request
 func TestRunWaitsForActiveRequest(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
+	// controlling request completion from the test
 	requestStarted := make(chan struct{})
 	finishRequest := make(chan struct{})
 	releaseRequest := sync.OnceFunc(func() { close(finishRequest) })
 	defer releaseRequest()
 
+	// keeping request active until the test allows a response
 	srv := server.NewServer("127.0.0.1:0")
 	srv.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(requestStarted)
@@ -72,12 +80,14 @@ func TestRunWaitsForActiveRequest(t *testing.T) {
 		case <-r.Context().Done():
 		}
 	})
+	// tracking when shutdown starts
 	shutdownStarted := make(chan struct{})
 	srv.RegisterOnShutdown(func() { close(shutdownStarted) })
 	addr, done := startServer(t, ctx, srv)
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	defer client.CloseIdleConnections()
+	// sending request without blocking the test
 	requestErrors := make(chan error, 1)
 	go func() {
 		response, err := client.Get("http://" + addr + "/slow")
@@ -92,16 +102,19 @@ func TestRunWaitsForActiveRequest(t *testing.T) {
 		requestErrors <- err
 	}()
 
+	// starting shutdown while the request is still active
 	waitForSignal(t, requestStarted)
 	cancel()
 	waitForSignal(t, shutdownStarted)
 
+	// checking server keeps waiting for the active request
 	select {
 	case err := <-done:
 		t.Fatalf("server exited before active request completed: %v", err)
 	case <-time.After(100 * time.Millisecond):
 	}
 
+	// allowing request to finish before server exits
 	releaseRequest()
 	if err := waitForResult(t, requestErrors); err != nil {
 		t.Fatal(err)
@@ -111,9 +124,11 @@ func TestRunWaitsForActiveRequest(t *testing.T) {
 	}
 }
 
+// checking startup error when port is already in use
 func TestRunListenError(t *testing.T) {
 	t.Parallel()
 
+	// reserving a local port before starting the server
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -130,14 +145,17 @@ func TestRunListenError(t *testing.T) {
 	}
 }
 
+// starting test server and returning its address and result channel
 func startServer(t *testing.T, ctx context.Context, srv *http.Server) (string, <-chan error) {
 	t.Helper()
 
+	// getting address after the listener is created
 	addresses := make(chan string, 1)
 	srv.BaseContext = func(listener net.Listener) context.Context {
 		addresses <- listener.Addr().String()
 		return context.Background()
 	}
+	// closing server even if the test fails
 	t.Cleanup(func() {
 		if err := srv.Close(); err != nil {
 			t.Errorf("close server: %v", err)
@@ -147,6 +165,7 @@ func startServer(t *testing.T, ctx context.Context, srv *http.Server) (string, <
 	done := make(chan error, 1)
 	go func() { done <- server.Run(ctx, srv) }()
 
+	// waiting for startup result with timeout
 	select {
 	case addr := <-addresses:
 		return addr, done
@@ -158,6 +177,7 @@ func startServer(t *testing.T, ctx context.Context, srv *http.Server) (string, <
 	return "", done
 }
 
+// waiting for operation result with timeout
 func waitForResult(t *testing.T, results <-chan error) error {
 	t.Helper()
 
@@ -170,6 +190,7 @@ func waitForResult(t *testing.T, results <-chan error) error {
 	}
 }
 
+// waiting for test synchronization signal with timeout
 func waitForSignal(t *testing.T, signal <-chan struct{}) {
 	t.Helper()
 
